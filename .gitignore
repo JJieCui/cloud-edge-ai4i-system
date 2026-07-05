@@ -1,0 +1,39 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.ipynb_checkpoints/
+
+# Environments
+.venv/
+venv/
+env/
+.env
+*.env
+
+# IDE
+.vscode/
+.idea/
+
+# Logs
+logs/*.log
+
+# Model weights / checkpoints
+models/
+checkpoints/
+*.pt
+*.pth
+*.bin
+*.safetensors
+llm_adapt/outputs/
+
+# Large temporary files
+*.zip
+*.rar
+*.7z
+
+# OS
+.DS_Store
+Thumbs.db
