@@ -9,3 +9,5 @@ requests
 streamlit
 flwr
 torch
+python-dotenv
+openai
