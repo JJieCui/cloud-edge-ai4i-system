@@ -1,0 +1,8 @@
+﻿conflict_type,severity,device_id,fault_label,involved_nodes,description,time_diff_s,min_risk_level,max_risk_level,level_diff,conflicting_actions,action_count
+duplicate_alert,low,device_001,Heat Dissipation Failure,"['edge_node_0', 'edge_node_1']",设备 device_001 在 0s 内重复上报 Heat Dissipation Failure,0.0,,,,,
+duplicate_alert,low,device_002,Normal,"['edge_node_2', 'edge_node_3']",设备 device_002 在 0s 内重复上报 Normal,0.0,,,,,
+duplicate_alert,low,device_003,Power Failure,"['edge_node_4', 'edge_node_0']",设备 device_003 在 0s 内重复上报 Power Failure,0.0,,,,,
+risk_level_mismatch,medium,device_001,Heat Dissipation Failure,"['edge_node_0', 'edge_node_1']","设备 device_001 风险等级不一致: medium(edge_node_1) vs high(edge_node_0), 相差 1 级",,medium,high,1.0,,
+risk_level_mismatch,medium,device_003,Power Failure,"['edge_node_4', 'edge_node_0']","设备 device_003 风险等级不一致: high(edge_node_0) vs critical(edge_node_4), 相差 1 级",,high,critical,1.0,,
+action_conflict,high,device_001,Heat Dissipation Failure,"['edge_node_0', 'edge_node_1']","设备 device_001 动作建议冲突: shutdown, maintain (涉及 2 个节点)",,,,,"['shutdown', 'maintain']",2.0
+action_conflict,high,device_003,Power Failure,"['edge_node_4', 'edge_node_0']","设备 device_003 动作建议冲突: replace, shutdown (涉及 2 个节点)",,,,,"['replace', 'shutdown']",2.0
