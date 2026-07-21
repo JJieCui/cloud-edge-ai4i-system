@@ -25,9 +25,6 @@ _ZH = {
     "high_latency": "高延迟",
     "disconnected": "断开",
     "gcm_mode": "云端 GCM 模式",
-    "module_info": "模块：一致性 + 仪表盘",
-    "branch_info": "分支：feat/dashboard-consistency",
-    "owner_info": "负责人：本科生五",
     "main_title": "云边分布式 AI 系统",
     "main_subtitle": "工业预测性维护 // AI4I 数据集",
     "footer": "云边协同 AI4I 系统 v1.0",
@@ -726,10 +723,6 @@ def sidebar():
         )
 
         st.markdown("---")
-        st.markdown("---")
-        st.caption(t("module_info"))
-        st.caption(t("branch_info"))
-        st.caption(t("owner_info"))
 
 
 def section_header(title, subtitle=""):
