@@ -1,0 +1,76 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "环境：安装项目依赖",
+      "type": "shell",
+      "command": "\"${command:python.interpreterPath}\" -m pip install -r requirements.txt -r requirements-dev.txt",
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": [],
+      "group": "build"
+    },
+    {
+      "label": "检查：Python 语法",
+      "type": "shell",
+      "command": "\"${command:python.interpreterPath}\" -m compileall cloud consistency dashboard data edge federated routing",
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": [],
+      "group": {
+        "kind": "test",
+        "isDefault": true
+      }
+    },
+    {
+      "label": "测试：运行 pytest",
+      "type": "shell",
+      "command": "\"${command:python.interpreterPath}\" -m pytest -q",
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": [],
+      "group": "test"
+    },
+    {
+      "label": "数据：检查 AI4I",
+      "type": "shell",
+      "command": "\"${command:python.interpreterPath}\" data/read_ai4i.py",
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "数据：重新划分 AI4I 客户端",
+      "type": "shell",
+      "command": "\"${command:python.interpreterPath}\" data/split_clients.py",
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "服务：启动云端 API",
+      "type": "shell",
+      "command": "\"${command:python.interpreterPath}\" -m uvicorn cloud.cloud_service:app --host 127.0.0.1 --port 8001 --reload",
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "isBackground": true,
+      "problemMatcher": []
+    },
+    {
+      "label": "服务：启动 Streamlit 仪表盘",
+      "type": "shell",
+      "command": "\"${command:python.interpreterPath}\" -m streamlit run dashboard/app.py --server.port 8501 --server.address 127.0.0.1",
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "isBackground": true,
+      "problemMatcher": []
+    }
+  ]
+}

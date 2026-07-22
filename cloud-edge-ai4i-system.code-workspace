@@ -1,0 +1,28 @@
+{
+  "folders": [
+    {
+      "name": "云边智控",
+      "path": "."
+    }
+  ],
+  "settings": {
+    "window.title": "云边智控：面向工业与能源场景的云边协同感知与决策系统 — ${activeEditorShort}",
+    "terminal.integrated.cwd": "${workspaceFolder}",
+    "workbench.startupEditor": "readme"
+  },
+  "extensions": {
+    "recommendations": [
+      "ms-python.python",
+      "ms-python.vscode-pylance",
+      "ms-python.vscode-python-envs",
+      "charliermarsh.ruff",
+      "github.vscode-pull-request-github",
+      "eamodio.gitlens",
+      "humao.rest-client",
+      "redhat.vscode-yaml",
+      "ms-azuretools.vscode-containers",
+      "docker.docker",
+      "yzhang.markdown-all-in-one"
+    ]
+  }
+}
