@@ -1,10 +1,11 @@
 ﻿metric,value,description
-total_events,6.0,总事件数
-conflict_count,7.0,冲突总数
-conflict_rate,1.1667,冲突比例
-type_duplicate_alert,3.0,duplicate_alert 类型冲突数
-type_risk_level_mismatch,2.0,risk_level_mismatch 类型冲突数
-type_action_conflict,2.0,action_conflict 类型冲突数
-severity_low,3.0,low 严重程度冲突数
-severity_medium,2.0,medium 严重程度冲突数
-severity_high,2.0,high 严重程度冲突数
+total_events,8.0,总事件数
+conflict_count,10.0,冲突总数
+conflict_rate,1.25,冲突比例
+type_duplicate_alert,2.0,duplicate_alert 类型冲突数
+type_label_conflict,2.0,label_conflict 类型冲突数
+type_risk_level_mismatch,3.0,risk_level_mismatch 类型冲突数
+type_action_conflict,3.0,action_conflict 类型冲突数
+severity_low,2.0,low 严重程度冲突数
+severity_medium,3.0,medium 严重程度冲突数
+severity_high,5.0,high 严重程度冲突数

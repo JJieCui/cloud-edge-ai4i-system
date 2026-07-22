@@ -1,0 +1,2 @@
+total_events,approved_count,denied_count,resource_conflicts,constraint_violations,grid_id,final_generation,final_load,net_imbalance,generation_utilization
+5,4,1,0,0,grid_a,225.0,165.0,60.0,93.75
