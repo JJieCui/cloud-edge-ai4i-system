@@ -18,6 +18,14 @@
 - results：实验结果表格和图
 - docs：文档、任务分工、实验日志
 
+关键文档：
+
+- `docs/project_scope.md`：项目边界、优先级和验收目标
+- `docs/architecture.md`：总体架构、接口和核心流程
+- `docs/metrics_matrix.md`：基线、指标和实验矩阵
+- `docs/task_board.md`：每日可勾选任务、里程碑和当前阻塞
+- `docs/云边智控_学习与研发计划.md`：7 月 22 日至 8 月 31 日学习与研发安排
+
 ## 开发规范
 
 所有人不要直接修改 main 分支。每个人在自己的功能分支开发，完成后提交 Pull Request。
