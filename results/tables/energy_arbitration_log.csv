@@ -1,0 +1,6 @@
+node_id,node_type,risk_level,confidence,priority,requested_adjustment,approved_adjustment,final_action,status,denied_reason
+load_2,consumer,critical,0.98,5,-10.0,-10.0,emergency_limit,approved,
+load_0,consumer,high,0.92,3,-20.0,-20.0,reduce_load,approved,
+gen_1,generator,medium,0.75,2,25.0,25.0,increase_generation,approved,
+load_1,consumer,medium,0.65,2,15.0,15.0,maintain,approved,
+gen_0,generator,low,0.85,1,30.0,0.0,maintain,denied,max_generation_capacity_exceeded

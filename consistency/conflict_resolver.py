@@ -3,7 +3,7 @@ import pandas as pd
 from typing import List, Dict, Any, Optional
 from pathlib import Path
 
-from .event_schema import Event, RISK_LEVELS
+from .event_schema import Event, RISK_LEVELS, FinalDecision
 from .conflict_detector import ConflictDetector, CONFLICT_SUMMARY_PATH
 
 RESOLUTION_STRATEGIES = [
@@ -63,17 +63,36 @@ class ConflictResolver:
                 })
                 self.successful_resolutions += 1
 
-        final_decision = None
+        final_decision_event = None
         if resolved_events:
-            final_decision = self._apply_strategy(resolved_events)
+            final_decision_event = self._apply_strategy(resolved_events)
 
         success_rate = (
             self.successful_resolutions / self.total_resolutions
             if self.total_resolutions > 0 else 1.0
         )
 
+        final_decision_obj = None
+        if final_decision_event:
+            has_conflict = self.total_resolutions > 0
+            decision_source = "arbitrated" if has_conflict else (
+                "cloud_only" if final_decision_event.source == "cloud" else "edge_only"
+            )
+            final_decision_obj = FinalDecision(
+                trace_id=final_decision_event.trace_id,
+                scene=final_decision_event.scene,
+                final_label=final_decision_event.fault_label,
+                final_risk_level=final_decision_event.risk_level,
+                final_action=final_decision_event.action,
+                confidence=final_decision_event.confidence,
+                decision_source=decision_source,
+                conflict_detected=has_conflict,
+                arbitration_reason=f"使用 {self.strategy} 策略仲裁结果" if has_conflict else "无冲突，直接采用",
+            )
+
         return {
-            "final_decision": final_decision.to_dict() if final_decision else None,
+            "final_decision": final_decision_event.to_dict() if final_decision_event else None,
+            "final_decision_obj": final_decision_obj,
             "resolved_events": [e.to_dict() for e in resolved_events],
             "resolution_log": resolution_log,
             "total_conflicts": self.total_resolutions,
@@ -180,16 +199,19 @@ def main():
         print(f"已解决数: {result['resolved_count']}")
         print(f"解决成功率: {result['success_rate']:.2%}")
 
-        if result["final_decision"]:
-            fd = result["final_decision"]
-            print(f"\n最终决策:")
-            print(f"  节点: {fd['node_id']}")
-            print(f"  设备: {fd['device_id']}")
-            print(f"  故障: {fd['fault_label']}")
-            print(f"  风险: {fd['risk_level']}")
-            print(f"  动作: {fd['action']}")
-            print(f"  置信度: {fd['confidence']:.2f}")
-            print(f"  来源: {fd['source']}")
+        if result["final_decision_obj"]:
+            fd = result["final_decision_obj"]
+            print(f"\n最终决策 (FinalDecision):")
+            print(f"  决策ID: {fd.decision_id}")
+            print(f"  追踪ID: {fd.trace_id}")
+            print(f"  场景: {fd.scene}")
+            print(f"  故障: {fd.final_label}")
+            print(f"  风险: {fd.final_risk_level}")
+            print(f"  动作: {fd.final_action}")
+            print(f"  置信度: {fd.confidence:.2f}")
+            print(f"  决策来源: {fd.decision_source}")
+            print(f"  检测到冲突: {fd.conflict_detected}")
+            print(f"  仲裁理由: {fd.arbitration_reason}")
 
         if result["resolution_log"]:
             print(f"\n仲裁详情:")

@@ -11,6 +11,7 @@ CONFLICT_SUMMARY_PATH = Path(__file__).parent.parent / "results" / "tables" / "c
 
 CONFLICT_TYPES = [
     "duplicate_alert",
+    "label_conflict",
     "risk_level_mismatch",
     "action_conflict",
 ]
@@ -32,10 +33,11 @@ class ConflictDetector:
             return self._build_result()
 
         duplicate_conflicts = self._detect_duplicate_alerts(events)
+        label_conflicts = self._detect_label_conflict(events)
         risk_conflicts = self._detect_risk_level_mismatch(events)
         action_conflicts = self._detect_action_conflict(events)
 
-        all_conflicts = duplicate_conflicts + risk_conflicts + action_conflicts
+        all_conflicts = duplicate_conflicts + label_conflicts + risk_conflicts + action_conflicts
         self.conflict_count = len(all_conflicts)
         self.conflict_details = all_conflicts
 
@@ -70,6 +72,49 @@ class ConflictDetector:
                     })
             else:
                 seen[key] = {"node_id": event.node_id, "timestamp": ts}
+
+        return conflicts
+
+    def _detect_label_conflict(self, events: List[Event]) -> List[Dict[str, Any]]:
+        conflicts = []
+        device_events = {}
+
+        for event in events:
+            key = event.device_id
+            if key not in device_events:
+                device_events[key] = []
+            device_events[key].append(event)
+
+        for device_id, evts in device_events.items():
+            if len(evts) < 2:
+                continue
+
+            labels = set(e.fault_label for e in evts)
+            if len(labels) <= 1:
+                continue
+
+            label_list = sorted(labels)
+            has_normal = any(e.fault_label.lower() in ("normal", "no_fault", "ok") for e in evts)
+            has_fault = any(e.fault_label.lower() not in ("normal", "no_fault", "ok") for e in evts)
+
+            if has_normal and has_fault:
+                severity = "high"
+            else:
+                severity = "medium"
+
+            conflicts.append({
+                "conflict_type": "label_conflict",
+                "severity": severity,
+                "device_id": device_id,
+                "fault_label": label_list[-1],
+                "involved_nodes": [e.node_id for e in evts],
+                "description": (
+                    f"设备 {device_id} 预测类别不一致: {', '.join(label_list)} "
+                    f"(涉及 {len(evts)} 个节点)"
+                ),
+                "conflicting_labels": label_list,
+                "label_count": len(label_list),
+            })
 
         return conflicts
 
@@ -260,10 +305,10 @@ def main():
         build_event(
             node_id="edge_node_3",
             device_id="device_002",
-            fault_label="Normal",
-            risk_level="low",
-            action="monitor",
-            confidence=0.88,
+            fault_label="Power Failure",
+            risk_level="high",
+            action="shutdown",
+            confidence=0.78,
             source="edge",
         ),
         build_event(
@@ -278,10 +323,28 @@ def main():
         build_event(
             node_id="edge_node_0",
             device_id="device_003",
-            fault_label="Power Failure",
+            fault_label="Overstrain Failure",
             risk_level="high",
             action="shutdown",
             confidence=0.78,
+            source="edge",
+        ),
+        build_event(
+            node_id="edge_node_1",
+            device_id="device_004",
+            fault_label="Normal",
+            risk_level="low",
+            action="monitor",
+            confidence=0.95,
+            source="edge",
+        ),
+        build_event(
+            node_id="edge_node_2",
+            device_id="device_004",
+            fault_label="Normal",
+            risk_level="low",
+            action="monitor",
+            confidence=0.91,
             source="edge",
         ),
     ]
