@@ -1,0 +1,15 @@
+{
+  "recommendations": [
+    "ms-python.python",
+    "ms-python.vscode-pylance",
+    "ms-python.vscode-python-envs",
+    "charliermarsh.ruff",
+    "github.vscode-pull-request-github",
+    "eamodio.gitlens",
+    "humao.rest-client",
+    "redhat.vscode-yaml",
+    "ms-azuretools.vscode-containers",
+    "docker.docker",
+    "yzhang.markdown-all-in-one"
+  ]
+}
