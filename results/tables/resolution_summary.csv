@@ -1,0 +1,5 @@
+﻿metric,value,description
+strategy,highest_risk_first,仲裁策略
+total_conflicts,4,总冲突数
+resolved_count,1,已解决数
+success_rate,0.25,解决成功率

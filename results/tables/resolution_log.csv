@@ -1,0 +1,2 @@
+﻿device_id,strategy,conflict_types,winner_node,winner_risk_level,winner_action,winner_confidence,winner_source
+device_001,highest_risk_first,"['duplicate_alert', 'duplicate_alert', 'risk_level_mismatch', 'action_conflict']",cloud_gcm,critical,shutdown,0.95,cloud
