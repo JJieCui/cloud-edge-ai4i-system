@@ -1,8 +1,6 @@
-# 本科生2：Flower 联邦学习服务器
-# TODO: 启动 FedAvg server
 import flwr as fl
 
-def get_fedavg_strategy(min_client_num=2):
+def get_fedavg_strategy(min_client_num=5):
     return fl.server.strategy.FedAvg(
         fraction_fit=1.0,
         fraction_evaluate=1.0,
@@ -12,13 +10,17 @@ def get_fedavg_strategy(min_client_num=2):
     )
 
 def run_server():
-    # 当前基础实验使用2个客户端，后续改为5只需把入参改成5
-    strategy = get_fedavg_strategy(2)
-    fl.server.start_server(
+    strategy = get_fedavg_strategy(5)
+    # 仅执行训练，移除所有参数保存逻辑，规避版本API报错
+    history = fl.server.start_server(
         server_address="127.0.0.1:8080",
         config=fl.server.ServerConfig(num_rounds=5),
         strategy=strategy
     )
+    # 打印5轮损失，方便复制进实验表格
+    print("=====5客户端FedAvg每轮损失汇总=====")
+    for idx, loss in enumerate(history.losses_distributed):
+        print(f"round {idx+1}: {loss[1]}")
 
 if __name__ == "__main__":
     run_server()

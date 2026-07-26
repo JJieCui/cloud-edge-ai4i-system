@@ -45,7 +45,6 @@ class FlowerClient(fl.client.NumPyClient):
     def set_parameters(self, params):
         for param, new_param in zip(self.model.parameters(), params):
             param.data = torch.tensor(new_param)
-
     def fit(self, params, config):
         self.set_parameters(params)
         self.model.train()
@@ -56,7 +55,13 @@ class FlowerClient(fl.client.NumPyClient):
                 loss = self.criterion(pred, batch_y)
                 loss.backward()
                 self.optimizer.step()
+        # 新增：本地保存当前全局模型
+        import os
+        os.makedirs("federated/weights", exist_ok=True)
+        torch.save(self.model.state_dict(), "federated/weights/fedavg_5client_global.pt")
+        print("客户端已保存最新全局模型权重到 federated/weights/fedavg_5client_global.pt")
         return self.get_parameters(config), len(self.dataset), {}
+
 
     def evaluate(self, params, config):
         self.set_parameters(params)
