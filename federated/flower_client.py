@@ -79,6 +79,13 @@ class FlowerClient(fl.client.NumPyClient):
         acc = correct / total
         avg_loss = loss_sum / total
         return avg_loss, len(self.dataset), {"accuracy": acc}
+def run_single_client(server_addr: str, data_csv: str):
+    """供多进程脚本调用的客户端启动入口"""
+    client = FlowerClient(data_csv)
+    fl.client.start_client(
+        server_address=server_addr,
+        client=client
+    )
 
 if __name__ == "__main__":
     import sys
