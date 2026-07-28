@@ -19,6 +19,7 @@ from routing import (
     create_network_simulator
 )
 from cloud import CloudReviewer
+from edge.perception.infer_edge import infer_edge
 
 app = FastAPI(title="Edge Node Service", version="1.0.0")
 
@@ -29,6 +30,7 @@ network_simulator = create_network_simulator(seed=42)
 cloud_reviewer = CloudReviewer()
 
 class DeviceState(BaseModel):
+    product_type: str = Field("L", description="Product type: L/M/H")
     air_temperature_k: float = Field(..., description="Air temperature in Kelvin")
     process_temperature_k: float = Field(..., description="Process temperature in Kelvin")
     rotational_speed_rpm: int = Field(..., description="Rotational speed in RPM")
@@ -60,6 +62,10 @@ class InferenceResult(BaseModel):
     risk_level: str
     action: str
     confidence: float
+    inference_source: str = "model"
+    model_name: str = "RandomForest"
+    fallback_used: bool = False
+    fallback_reason: str = ""
     inference_time_ms: float
     routing: RoutingInfo
     cloud_review: Optional[CloudReviewInfo] = None
@@ -186,7 +192,27 @@ async def predict(device_state: DeviceState, device_id: Optional[str] = None):
     device_id = device_id or f"{EDGE_NODE_ID}_{int(time.time())}"
     
     try:
-        result = mock_inference(device_state)
+        try:
+            result = infer_edge(
+                {
+                    "product_type": device_state.product_type,
+                    "air_temperature_k": device_state.air_temperature_k,
+                    "process_temperature_k": device_state.process_temperature_k,
+                    "rotational_speed_rpm": device_state.rotational_speed_rpm,
+                    "torque_nm": device_state.torque_nm,
+                    "tool_wear_min": device_state.tool_wear_min,
+                }
+            )
+            inference_source = "model"
+            model_name = "RandomForest"
+            fallback_used = False
+            fallback_reason = ""
+        except Exception as e:
+            result = mock_inference(device_state)
+            inference_source = "mock"
+            model_name = "mock_inference"
+            fallback_used = True
+            fallback_reason = str(e)
         inference_time_ms = round((time.time() - start_time) * 1000, 2)
         
         network_status = network_simulator.simulate_status_change(probability=0.1)
@@ -223,6 +249,10 @@ async def predict(device_state: DeviceState, device_id: Optional[str] = None):
             risk_level=result["risk_level"],
             action=result["action"],
             confidence=result["confidence"],
+            inference_source=inference_source,
+            model_name=model_name,
+            fallback_used=fallback_used,
+            fallback_reason=fallback_reason,
             inference_time_ms=inference_time_ms,
             routing=routing_info,
             cloud_review=cloud_review,
@@ -238,7 +268,7 @@ async def get_config():
         "edge_node_id": EDGE_NODE_ID,
         "supported_features": ["fault_detection", "risk_assessment", "action_suggestion", "dynamic_routing", "cloud_review"],
         "routing_modes": [mode.value for mode in RoutingMode],
-        "model_type": "mock_baseline",
+        "model_type": "edge_perception_model_with_mock_fallback",
         "version": "2.0.0",
         "cloud_review_available": True
     }
