@@ -13,7 +13,7 @@ def test_event_schema():
         RISK_LEVELS, ACTIONS, SCENES,
     )
 
-    print("[1/5] 测试 event_schema.py ...", end=" ")
+    print("[1/6] 测试 event_schema.py ...", end=" ")
     try:
         obs = Observation(
             scene="industrial", node_id="n1", object_id="d1",
@@ -65,20 +65,23 @@ def test_conflict_detector():
     from consistency.event_schema import build_event
     from consistency.conflict_detector import ConflictDetector
 
-    print("[2/5] 测试 conflict_detector.py ...", end=" ")
+    print("[2/6] 测试 conflict_detector.py ...", end=" ")
     try:
         events = [
             build_event("n1", "d1", "Fault", "high", "shutdown", 0.9, "edge"),
             build_event("n2", "d1", "Fault", "medium", "maintain", 0.7, "edge"),
             build_event("n3", "d2", "Normal", "low", "monitor", 0.95, "edge"),
             build_event("n4", "d2", "Power Failure", "high", "shutdown", 0.8, "edge"),
+            build_event("n5", "d3", "Stale", "high", "shutdown", 0.6, "edge", data_age_ms=6000),
         ]
-        detector = ConflictDetector(duplicate_time_window_s=60)
+        detector = ConflictDetector(duplicate_time_window_s=60, stale_threshold_ms=5000)
         result = detector.detect(events)
-        assert result["total_events"] == 4
-        assert result["conflict_count"] >= 2
+        assert result["total_events"] == 5
+        assert result["conflict_count"] >= 3
         assert "label_conflict" in result["conflict_type_counts"]
         assert "action_conflict" in result["conflict_type_counts"]
+        assert "stale_state_conflict" in result["conflict_type_counts"]
+        assert result["conflict_type_counts"]["stale_state_conflict"] >= 1
         print("OK")
         return True
     except Exception as e:
@@ -90,19 +93,55 @@ def test_conflict_resolver():
     from consistency.event_schema import build_event
     from consistency.conflict_resolver import ConflictResolver
 
-    print("[3/5] 测试 conflict_resolver.py ...", end=" ")
+    print("[3/6] 测试 conflict_resolver.py ...", end=" ")
     try:
         events = [
             build_event("n1", "d1", "Fault", "high", "shutdown", 0.9, "edge"),
             build_event("n2", "d1", "Fault", "medium", "maintain", 0.7, "edge"),
+            build_event("cloud", "d1", "Fault", "critical", "shutdown", 0.95, "cloud"),
         ]
         resolver = ConflictResolver(strategy="highest_risk_first")
         result = resolver.resolve(events)
         assert result["final_decision"] is not None
         assert result["final_decision_obj"] is not None
-        assert result["final_decision_obj"].final_risk_level == "high"
+        assert result["final_decision_obj"].final_risk_level == "critical"
         assert result["final_decision_obj"].decision_source == "arbitrated"
         assert result["success_rate"] >= 0.0
+        assert "effective_strategy" in result
+        assert "network_status" in result
+        print("OK")
+        return True
+    except Exception as e:
+        print(f"FAIL: {e}")
+        return False
+
+
+def test_routing_aware_arbitration():
+    from consistency.event_schema import build_event
+    from consistency.conflict_resolver import ConflictResolver
+
+    print("[4/6] 测试路由感知仲裁 ...", end=" ")
+    try:
+        events = [
+            build_event("n1", "d1", "Fault", "high", "shutdown", 0.85, "edge"),
+            build_event("cloud", "d1", "Fault", "critical", "replace", 0.95, "cloud"),
+        ]
+        resolver_normal = ConflictResolver(strategy="cloud_first", network_status="normal")
+        result_normal = resolver_normal.resolve(events)
+        assert result_normal["effective_strategy"] == "cloud_first"
+        assert result_normal["final_decision_obj"].final_action == "replace"
+
+        resolver_weak = ConflictResolver(strategy="cloud_first", network_status="weak")
+        result_weak = resolver_weak.resolve(events)
+        assert result_weak["effective_strategy"] == "edge_first"
+        assert result_weak["final_decision_obj"].final_action == "shutdown"
+        assert "弱网" in result_weak["final_decision_obj"].arbitration_reason
+
+        resolver_disconnected = ConflictResolver(strategy="cloud_first", network_status="disconnected")
+        result_disconnected = resolver_disconnected.resolve(events)
+        assert result_disconnected["effective_strategy"] == "edge_first"
+        assert result_disconnected["final_decision_obj"].final_action == "shutdown"
+        assert "网络断开" in result_disconnected["final_decision_obj"].arbitration_reason
         print("OK")
         return True
     except Exception as e:
@@ -114,7 +153,7 @@ def test_energy_arbitrator():
     from consistency.energy_arbitrator import EnergyArbitrator, GridState
     from consistency.event_schema import EnergyEvent
 
-    print("[4/5] 测试 energy_arbitrator.py ...", end=" ")
+    print("[5/6] 测试 energy_arbitrator.py ...", end=" ")
     try:
         grid = GridState(
             grid_id="grid_a",
@@ -146,7 +185,7 @@ def test_csv_output():
     import os
     from pathlib import Path
 
-    print("[5/5] 测试 CSV 结果文件生成 ...", end=" ")
+    print("[6/6] 测试 CSV 结果文件生成 ...", end=" ")
     try:
         results_dir = Path(__file__).parent.parent / "results" / "tables"
         expected_files = [
@@ -176,6 +215,7 @@ def main():
         test_event_schema,
         test_conflict_detector,
         test_conflict_resolver,
+        test_routing_aware_arbitration,
         test_energy_arbitrator,
         test_csv_output,
     ]
