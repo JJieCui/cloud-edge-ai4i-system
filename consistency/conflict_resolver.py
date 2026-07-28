@@ -10,14 +10,20 @@ RESOLUTION_STRATEGIES = [
     "highest_risk_first",
     "highest_confidence_first",
     "cloud_first",
+    "edge_first",
 ]
+
+NETWORK_STATUSES = ["normal", "weak", "high_latency", "disconnected"]
 
 
 class ConflictResolver:
-    def __init__(self, strategy: str = "highest_risk_first"):
+    def __init__(self, strategy: str = "highest_risk_first", network_status: str = "normal"):
         if strategy not in RESOLUTION_STRATEGIES:
             raise ValueError(f"strategy 必须是 {RESOLUTION_STRATEGIES} 之一")
+        if network_status not in NETWORK_STATUSES:
+            raise ValueError(f"network_status 必须是 {NETWORK_STATUSES} 之一")
         self.strategy = strategy
+        self.network_status = network_status
         self.total_resolutions = 0
         self.successful_resolutions = 0
 
@@ -46,14 +52,16 @@ class ConflictResolver:
                 resolved_events.append(evts[0])
                 continue
 
-            winning_event = self._apply_strategy(evts)
+            effective_strategy = self._get_effective_strategy()
+            winning_event = self._apply_strategy(evts, effective_strategy)
             resolved_events.append(winning_event)
 
             device_conflicts = [c for c in conflicts if c["device_id"] == device_id]
             if device_conflicts:
                 resolution_log.append({
                     "device_id": device_id,
-                    "strategy": self.strategy,
+                    "strategy": effective_strategy,
+                    "network_status": self.network_status,
                     "conflict_types": [c["conflict_type"] for c in device_conflicts],
                     "winner_node": winning_event.node_id,
                     "winner_risk_level": winning_event.risk_level,
@@ -65,7 +73,8 @@ class ConflictResolver:
 
         final_decision_event = None
         if resolved_events:
-            final_decision_event = self._apply_strategy(resolved_events)
+            effective_strategy = self._get_effective_strategy()
+            final_decision_event = self._apply_strategy(resolved_events, effective_strategy)
 
         success_rate = (
             self.successful_resolutions / self.total_resolutions
@@ -87,7 +96,7 @@ class ConflictResolver:
                 confidence=final_decision_event.confidence,
                 decision_source=decision_source,
                 conflict_detected=has_conflict,
-                arbitration_reason=f"使用 {self.strategy} 策略仲裁结果" if has_conflict else "无冲突，直接采用",
+                arbitration_reason=self._build_arbitration_reason(effective_strategy) if has_conflict else "无冲突，直接采用",
             )
 
         return {
@@ -99,17 +108,37 @@ class ConflictResolver:
             "resolved_count": self.successful_resolutions,
             "success_rate": round(success_rate, 4),
             "strategy": self.strategy,
+            "effective_strategy": effective_strategy,
+            "network_status": self.network_status,
         }
 
-    def _apply_strategy(self, events: List[Event]) -> Event:
-        if self.strategy == "highest_risk_first":
+    def _get_effective_strategy(self) -> str:
+        if self.network_status in ["weak", "disconnected"]:
+            return "edge_first"
+        return self.strategy
+
+    def _build_arbitration_reason(self, effective_strategy: str) -> str:
+        base_reason = f"使用 {effective_strategy} 策略仲裁结果"
+        if self.network_status in ["weak", "disconnected"]:
+            network_desc = "网络断开" if self.network_status == "disconnected" else "弱网"
+            base_reason += f"（{network_desc}，自动切换为边缘优先）"
+        return base_reason
+
+    def _apply_strategy(self, events: List[Event], strategy: str = None) -> Event:
+        s = strategy or self.strategy
+        if s == "highest_risk_first":
             return max(events, key=lambda e: (e.risk_level_order(), e.confidence))
-        elif self.strategy == "highest_confidence_first":
+        elif s == "highest_confidence_first":
             return max(events, key=lambda e: (e.confidence, e.risk_level_order()))
-        elif self.strategy == "cloud_first":
+        elif s == "cloud_first":
             cloud_events = [e for e in events if e.source == "cloud"]
             if cloud_events:
                 return max(cloud_events, key=lambda e: (e.risk_level_order(), e.confidence))
+            return max(events, key=lambda e: (e.risk_level_order(), e.confidence))
+        elif s == "edge_first":
+            edge_events = [e for e in events if e.source == "edge"]
+            if edge_events:
+                return max(edge_events, key=lambda e: (e.risk_level_order(), e.confidence))
             return max(events, key=lambda e: (e.risk_level_order(), e.confidence))
         else:
             return events[0]
@@ -198,6 +227,28 @@ def main():
         print(f"\n总冲突数: {result['total_conflicts']}")
         print(f"已解决数: {result['resolved_count']}")
         print(f"解决成功率: {result['success_rate']:.2%}")
+        print(f"生效策略: {result.get('effective_strategy', strategy)}")
+        print(f"网络状态: {result.get('network_status', 'normal')}")
+
+    # 测试路由感知仲裁（弱网/断网场景）
+    print(f"\n{'='*50}")
+    print("路由感知仲裁测试")
+    print("=" * 50)
+
+    for network_status in ["normal", "weak", "disconnected"]:
+        print(f"\n--- 网络状态: {network_status} ---")
+        resolver = ConflictResolver(strategy="cloud_first", network_status=network_status)
+        result = resolver.resolve(test_events, detect_result["conflict_details"])
+
+        print(f"配置策略: cloud_first")
+        print(f"生效策略: {result.get('effective_strategy')}")
+        print(f"解决成功率: {result['success_rate']:.2%}")
+
+        if result["final_decision_obj"]:
+            fd = result["final_decision_obj"]
+            print(f"最终动作: {fd.final_action}")
+            print(f"决策来源: {fd.decision_source}")
+            print(f"仲裁理由: {fd.arbitration_reason}")
 
         if result["final_decision_obj"]:
             fd = result["final_decision_obj"]

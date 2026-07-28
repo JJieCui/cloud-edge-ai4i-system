@@ -14,12 +14,14 @@ CONFLICT_TYPES = [
     "label_conflict",
     "risk_level_mismatch",
     "action_conflict",
+    "stale_state_conflict",
 ]
 
 
 class ConflictDetector:
-    def __init__(self, duplicate_time_window_s: int = 60):
+    def __init__(self, duplicate_time_window_s: int = 60, stale_threshold_ms: int = 5000):
         self.duplicate_time_window_s = duplicate_time_window_s
+        self.stale_threshold_ms = stale_threshold_ms
         self.total_events = 0
         self.conflict_count = 0
         self.conflict_details = []
@@ -36,8 +38,9 @@ class ConflictDetector:
         label_conflicts = self._detect_label_conflict(events)
         risk_conflicts = self._detect_risk_level_mismatch(events)
         action_conflicts = self._detect_action_conflict(events)
+        stale_conflicts = self._detect_stale_state_conflict(events)
 
-        all_conflicts = duplicate_conflicts + label_conflicts + risk_conflicts + action_conflicts
+        all_conflicts = duplicate_conflicts + label_conflicts + risk_conflicts + action_conflicts + stale_conflicts
         self.conflict_count = len(all_conflicts)
         self.conflict_details = all_conflicts
 
@@ -199,6 +202,31 @@ class ConflictDetector:
 
         return conflicts
 
+    def _detect_stale_state_conflict(self, events: List[Event]) -> List[Dict[str, Any]]:
+        conflicts = []
+
+        for event in events:
+            data_age = event.data_age_ms if hasattr(event, 'data_age_ms') else 0
+
+            if data_age >= self.stale_threshold_ms:
+                severity = "high" if event.risk_level in ("high", "critical") else "medium"
+
+                conflicts.append({
+                    "conflict_type": "stale_state_conflict",
+                    "severity": severity,
+                    "device_id": event.device_id,
+                    "fault_label": event.fault_label,
+                    "involved_nodes": [event.node_id],
+                    "description": (
+                        f"设备 {event.device_id} 数据已过期: "
+                        f"数据年龄 {data_age}ms > 阈值 {self.stale_threshold_ms}ms"
+                    ),
+                    "data_age_ms": data_age,
+                    "stale_threshold_ms": self.stale_threshold_ms,
+                })
+
+        return conflicts
+
     def _build_result(self) -> Dict[str, Any]:
         conflict_rate = self.conflict_count / self.total_events if self.total_events > 0 else 0.0
 
@@ -347,13 +375,34 @@ def main():
             confidence=0.91,
             source="edge",
         ),
+        # 过期状态冲突测试
+        build_event(
+            node_id="edge_node_3",
+            device_id="device_005",
+            fault_label="Data Stale",
+            risk_level="high",
+            action="shutdown",
+            confidence=0.60,
+            source="edge",
+            data_age_ms=6000,
+        ),
+        build_event(
+            node_id="edge_node_4",
+            device_id="device_006",
+            fault_label="Data Stale",
+            risk_level="medium",
+            action="maintain",
+            confidence=0.55,
+            source="edge",
+            data_age_ms=8000,
+        ),
     ]
 
     print(f"\n测试事件数: {len(test_events)}")
     for i, e in enumerate(test_events):
         print(f"  [{i}] {e.node_id} - {e.device_id} - {e.risk_level} - {e.action}")
 
-    detector = ConflictDetector(duplicate_time_window_s=120)
+    detector = ConflictDetector(duplicate_time_window_s=120, stale_threshold_ms=5000)
     result = detector.detect(test_events)
 
     print(f"\n--- 检测结果 ---")

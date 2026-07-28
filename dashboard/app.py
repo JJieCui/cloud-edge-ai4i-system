@@ -1,14 +1,21 @@
 import os
 import sys
-import streamlit as st
-import pandas as pd
 from pathlib import Path
+
+import pandas as pd
+import streamlit as st
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from consistency.event_schema import build_event
 from consistency.conflict_detector import ConflictDetector
-from consistency.conflict_resolver import ConflictResolver, RESOLUTION_STRATEGIES
+from consistency.conflict_resolver import RESOLUTION_STRATEGIES, ConflictResolver
+from consistency.event_schema import build_event
+from routing.network_simulator import (
+    NetworkStatus,
+    create_network_simulator,
+    get_network_status_description,
+)
+from routing.router import RoutingMode, create_router, get_routing_mode_description
 
 _ZH = {
     "page_title": "云边协同 AI4I 系统",
@@ -97,6 +104,18 @@ _ZH = {
     "highest_risk_priority": "风险等级最高优先",
     "highest_confidence_priority": "置信度最高优先",
     "cloud_decision_priority": "云端决策优先",
+    "routing_visualization": "路由可视化",
+    "routing_visualization_sub": "路径与网络状态",
+    "edge_cloud_path": "边云路径",
+    "rtt": "RTT (ms)",
+    "packet_loss": "丢包率",
+    "cloud_rate": "上云率",
+    "avg_latency": "平均时延",
+    "p95_latency": "P95 时延",
+    "routing_reason": "路由原因",
+    "route_path": "路由路径",
+    "routing_explanation": "路由说明",
+    "network_status": "网络状态",
     "federated_learning": "联邦学习",
     "federated_learning_sub": "Flower FedAvg",
     "round": "训练轮次",
@@ -657,7 +676,8 @@ def init_session_state():
 
 def sidebar():
     with st.sidebar:
-        st.markdown(f"""
+        st.markdown(
+            f"""
         <div style="text-align: center; margin-bottom: 20px; padding: 10px 0;">
             <div style="font-size: 1.3rem; font-weight: 700; font-family: 'Orbitron', 'Microsoft YaHei', sans-serif; color: #e0f7ff; text-shadow: 0 0 10px rgba(0, 200, 255, 0.5); letter-spacing: 1px;">
                 ⚡ {t("sidebar_title")}
@@ -669,18 +689,23 @@ def sidebar():
             </div>
         </div>
         <hr style="border-color: rgba(0, 200, 255, 0.15); margin: 0 0 20px 0;">
-        """, unsafe_allow_html=True)
+        """,
+            unsafe_allow_html=True,
+        )
 
         st.markdown(f"### 📡 {t('node_status')}")
         for i in range(5):
             status_color = "#00ff88" if i < 5 else "#ffaa00"
             status_text = t("online") if i < 5 else t("standby")
-            st.markdown(f"""
+            st.markdown(
+                f"""
             <div style="display: flex; justify-content: space-between; align-items: center; padding: 4px 0; font-size: 0.75rem;">
                 <span style="color: #6b8cae;">EDGE_NODE_{i}</span>
                 <span style="color: {status_color}; font-weight: 600;">{status_text}</span>
             </div>
-            """, unsafe_allow_html=True)
+            """,
+                unsafe_allow_html=True,
+            )
 
         st.markdown("---")
 
@@ -706,11 +731,14 @@ def sidebar():
             "offline": ("#ff4466", t("disconnected")),
         }
         color, text = status_map[network_status]
-        st.markdown(f"""
+        st.markdown(
+            f"""
         <div style="text-align: center; padding: 8px; background: rgba(0,0,0,0.3); border-radius: 4px; margin-top: 8px;">
             <span style="color: {color}; font-size: 0.8rem; font-weight: 600; letter-spacing: 1px;">{text}</span>
         </div>
-        """, unsafe_allow_html=True)
+        """,
+            unsafe_allow_html=True,
+        )
 
         st.markdown("---")
 
@@ -726,12 +754,15 @@ def sidebar():
 
 
 def section_header(title, subtitle=""):
-    st.markdown(f"""
+    st.markdown(
+        f"""
     <div style="position: relative; margin: 2.5rem 0 1.25rem 0; padding-left: 12px; border-left: 3px solid #00d4ff;">
         <h2 style="margin: 0;">{title}</h2>
-        {f'<p style="color: #4a6580; font-size: 0.75rem; margin: 8px 0 0 0; letter-spacing: 1px;">{subtitle}</p>' if subtitle else ''}
+        {f'<p style="color: #4a6580; font-size: 0.75rem; margin: 8px 0 0 0; letter-spacing: 1px;">{subtitle}</p>' if subtitle else ""}
     </div>
-    """, unsafe_allow_html=True)
+    """,
+        unsafe_allow_html=True,
+    )
 
 
 def data_input_section():
@@ -796,7 +827,9 @@ def edge_inference_section():
 
     with st.expander(f" {t('inference_details')} "):
         st.info("Module: edge/perception/infer_edge.py")
-        st.code(f"Output: fault_label, risk_level, action, confidence\nStatus: {t('pending_integration')}")
+        st.code(
+            f"Output: fault_label, risk_level, action, confidence\nStatus: {t('pending_integration')}"
+        )
 
 
 def routing_section():
@@ -814,7 +847,9 @@ def routing_section():
             "HIGH LATENCY": t("high_latency"),
             "OFFLINE": t("disconnected"),
         }
-        st.metric(label=t("network"), value=status_map_cn.get(status_display, status_display))
+        st.metric(
+            label=t("network"), value=status_map_cn.get(status_display, status_display)
+        )
     with col3:
         st.metric(label=t("e2e_latency"), value="—", delta=t("tbd"))
 
@@ -822,12 +857,95 @@ def routing_section():
         st.markdown(f"""
         | Mode | Description |
         |------|-------------|
-        | **{t('edge_only')}** | {t('edge_only_desc')} |
-        | **{t('cloud_only')}** | {t('cloud_only_desc')} |
-        | **{t('cloud_edge')}** | {t('cloud_edge_desc')} |
-        | **{t('weaknet_auto')}** | {t('weaknet_auto_desc')} |
+        | **{t("edge_only")}** | {t("edge_only_desc")} |
+        | **{t("cloud_only")}** | {t("cloud_only_desc")} |
+        | **{t("cloud_edge")}** | {t("cloud_edge_desc")} |
+        | **{t("weaknet_auto")}** | {t("weaknet_auto_desc")} |
         """)
         st.info(f"Module: routing/router.py | Status: {t('pending_integration')}")
+
+
+def routing_visualization_section():
+    section_header(t("routing_visualization"), t("routing_visualization_sub"))
+
+    col1, col2, col3 = st.columns(3)
+
+    network_status_map = {
+        "normal": NetworkStatus.NORMAL,
+        "weak": NetworkStatus.WEAK,
+        "high_latency": NetworkStatus.HIGH_LATENCY,
+        "offline": NetworkStatus.DISCONNECTED,
+    }
+    current_network = network_status_map.get(
+        st.session_state.network_status, NetworkStatus.NORMAL
+    )
+
+    with col1:
+        st.metric(
+            label=t("network_status"),
+            value=get_network_status_description(current_network),
+            delta=current_network.value,
+        )
+    with col2:
+        simulator = create_network_simulator(seed=42)
+        simulator.set_status(current_network)
+        stats = simulator.get_network_stats()
+        st.metric(label=t("rtt"), value=f"{stats.latency_ms:.1f} ms")
+    with col3:
+        st.metric(label=t("packet_loss"), value=f"{stats.packet_loss_rate:.2%}")
+
+    st.markdown("---")
+
+    st.markdown(f"#### {t('routing_explanation')}")
+
+    confidence = st.slider(t("confidence"), 0.0, 1.0, 0.75, 0.01)
+    risk_level = st.selectbox(
+        t("risk_level"), ["low", "medium", "high", "critical"], index=2
+    )
+
+    router = create_router()
+    router.set_network_status(current_network)
+    decision = router.decide(confidence, risk_level)
+
+    st.markdown(
+        f"""
+    <div style="background: rgba(0, 50, 80, 0.3); padding: 1rem; border-radius: 8px; border: 1px solid rgba(0, 200, 255, 0.2);">
+        <div style="display: flex; align-items: center; gap: 1rem; margin-bottom: 1rem;">
+            <div style="width: 60px; height: 60px; background: rgba(0, 255, 136, 0.2); border-radius: 50%; display: flex; align-items: center; justify-content: center;">
+                <span style="font-size: 1.5rem;">🖥️</span>
+            </div>
+            <div style="flex: 1;">
+                <div style="color: #00ff88; font-weight: 600;">Edge Node</div>
+                <div style="color: #6b8cae; font-size: 0.8rem;">置信度: {confidence:.2f} | 风险: {risk_level}</div>
+            </div>
+        </div>
+        <div style="text-align: center; margin: 0.5rem 0;">
+            <span style="color: #00d4ff; font-size: 1.5rem;">{"→" if decision.mode != RoutingMode.EDGE_ONLY else "↔"}</span>
+        </div>
+        <div style="display: flex; align-items: center; gap: 1rem;">
+            <div style="flex: 1;">
+                <div style="color: {"#ffaa00" if decision.mode == RoutingMode.CLOUD_ONLY or decision.mode == RoutingMode.CLOUD_EDGE else "#00ff88"}; font-weight: 600;">
+                    {get_routing_mode_description(decision.mode)}
+                </div>
+                <div style="color: #6b8cae; font-size: 0.8rem;">{decision.reason}</div>
+            </div>
+            <div style="width: 60px; height: 60px; background: {"rgba(255, 170, 0, 0.2)" if decision.mode == RoutingMode.CLOUD_ONLY or decision.mode == RoutingMode.CLOUD_EDGE else "rgba(0, 50, 80, 0.3)"}; border-radius: 50%; display: flex; align-items: center; justify-content: center;">
+                <span style="font-size: 1.5rem;">☁️</span>
+            </div>
+        </div>
+    </div>
+    """,
+        unsafe_allow_html=True,
+    )
+
+    st.markdown("---")
+
+    st.markdown(f"#### {t('routing_log')}")
+    routing_log_path = LOGS_DIR / "routing_log.csv"
+    if routing_log_path.exists():
+        st.dataframe(pd.read_csv(routing_log_path), width="stretch", height=200)
+    else:
+        st.info(t("no_routing_log"))
 
 
 def cloud_review_section():
@@ -844,7 +962,9 @@ def cloud_review_section():
 
     with st.expander(f" {t('latest_review')} "):
         st.info("Module: cloud/cloud_review.py")
-        st.code(f"Output: gcm_fault_label, gcm_risk_level, gcm_action\nStatus: {t('pending_integration')}")
+        st.code(
+            f"Output: gcm_fault_label, gcm_risk_level, gcm_action\nStatus: {t('pending_integration')}"
+        )
 
 
 def generate_demo_events():
@@ -979,8 +1099,15 @@ def consistency_section():
     if detect_result and detect_result["conflict_details"]:
         st.markdown(f"### {t('conflict_details')}")
         details_df = pd.DataFrame(detect_result["conflict_details"])
-        display_df = details_df[[t("conflict_type"), t("severity"), t("device_id"), t("description")]].copy()
-        display_df.columns = [t("conflict_type"), t("severity"), t("device_id"), t("description")]
+        display_df = details_df[
+            [t("conflict_type"), t("severity"), t("device_id"), t("description")]
+        ].copy()
+        display_df.columns = [
+            t("conflict_type"),
+            t("severity"),
+            t("device_id"),
+            t("description"),
+        ]
         st.dataframe(display_df, width="stretch", height=250, hide_index=True)
 
     if resolve_result and resolve_result.get("resolution_log"):
@@ -1003,15 +1130,15 @@ def consistency_section():
 
     with st.expander(f" {t('resolution_strategy')} "):
         st.markdown(f"""
-        **{t('detection')}:**
-        - {t('duplicate_alerts')}
-        - {t('risk_level_mismatch')}
-        - {t('action_conflict')}
+        **{t("detection")}:**
+        - {t("duplicate_alerts")}
+        - {t("risk_level_mismatch")}
+        - {t("action_conflict")}
 
-        **{t('arbitration')}:**
-        - {t('highest_risk_priority')}
-        - {t('highest_confidence_priority')}
-        - {t('cloud_decision_priority')}
+        **{t("arbitration")}:**
+        - {t("highest_risk_priority")}
+        - {t("highest_confidence_priority")}
+        - {t("cloud_decision_priority")}
         """)
         st.info("Module: consistency/conflict_detector.py + conflict_resolver.py")
 
@@ -1037,7 +1164,9 @@ def federated_section():
 def logs_and_results_section():
     section_header(t("logs_records"), t("logs_records_sub"))
 
-    tab1, tab2, tab3 = st.tabs([t("routing_log"), t("cloud_review_log"), t("conflict_summary")])
+    tab1, tab2, tab3 = st.tabs(
+        [t("routing_log"), t("cloud_review_log"), t("conflict_summary")]
+    )
 
     with tab1:
         log_path = LOGS_DIR / "routing_log.csv"
@@ -1064,40 +1193,50 @@ def logs_and_results_section():
 def main():
     st.markdown(TECH_CSS, unsafe_allow_html=True)
 
-    st.markdown("""
+    st.markdown(
+        """
     <div id="loading-overlay">
         <div class="loading-spinner"></div>
         <div class="loading-text">SYSTEM LOADING</div>
     </div>
-    """, unsafe_allow_html=True)
+    """,
+        unsafe_allow_html=True,
+    )
 
     init_session_state()
     sidebar()
 
-    st.markdown(f"""
+    st.markdown(
+        f"""
     <div style="position: relative; margin-bottom: 2rem; padding-bottom: 1rem; border-bottom: 1px solid rgba(0, 200, 255, 0.3);">
         <h1>{t("main_title")}</h1>
         <p style="color: #6b8cae; font-size: 0.8rem; margin: 8px 0 0 0; letter-spacing: 2px;">
             {t("main_subtitle")}
         </p>
     </div>
-    """, unsafe_allow_html=True)
+    """,
+        unsafe_allow_html=True,
+    )
 
     data_input_section()
     edge_inference_section()
     routing_section()
+    routing_visualization_section()
     cloud_review_section()
     consistency_section()
     federated_section()
     logs_and_results_section()
 
-    st.markdown(f"""
+    st.markdown(
+        f"""
     <div style="text-align: center; margin-top: 2rem; padding: 1rem; border-top: 1px solid rgba(0, 200, 255, 0.1);">
         <p style="color: #4a6580; font-size: 0.7rem; letter-spacing: 2px;">
             ═══ {t("footer")} ═══
         </p>
     </div>
-    """, unsafe_allow_html=True)
+    """,
+        unsafe_allow_html=True,
+    )
 
 
 if __name__ == "__main__":
