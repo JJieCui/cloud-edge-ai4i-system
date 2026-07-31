@@ -8,7 +8,6 @@ import json
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-
 def test_industrial_pipeline():
     """工业场景完整流水线：Observation → EdgeDecision → RouteDecision → CloudReview → FinalDecision"""
     print("[1/4] 测试工业场景完整流水线 ...", end=" ")
@@ -133,7 +132,6 @@ def test_industrial_pipeline():
         traceback.print_exc()
         print(f"FAIL: {e}")
         return False
-
 
 def test_weaknet_fallback():
     """弱网自治路径测试"""
