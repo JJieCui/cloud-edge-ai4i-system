@@ -11,6 +11,9 @@ from routing import (
     RoutingMode
 )
 from cloud import CloudReviewer
+from consistency.event_schema import build_event
+from consistency.conflict_detector import ConflictDetector
+from consistency.conflict_resolver import ConflictResolver
 
 class MockDeviceState:
     def __init__(self, air_temperature_k, process_temperature_k, rotational_speed_rpm, torque_nm, tool_wear_min):
@@ -102,24 +105,68 @@ def perform_cloud_review(device_id, result, device_state, cloud_reviewer):
             "gcm_reason": f"云端复核失败: {str(e)}"
         }
 
-def make_final_decision(routing_mode, edge_result, cloud_review):
-    if routing_mode == RoutingMode.EDGE_ONLY:
-        return "edge", edge_result["action"]
-    elif routing_mode == RoutingMode.CLOUD_ONLY:
-        if cloud_review and cloud_review["reviewed"]:
-            return "cloud", cloud_review["gcm_action"]
-        return "edge", edge_result["action"]
-    elif routing_mode == RoutingMode.CLOUD_EDGE:
-        if cloud_review and cloud_review["reviewed"]:
-            if cloud_review["consistent_with_edge"]:
-                return "consensus", edge_result["action"]
-            else:
-                return "cloud_disagrees", f"边缘: {edge_result['action']}, 云端: {cloud_review['gcm_action']}"
-        return "edge", edge_result["action"]
-    elif routing_mode == RoutingMode.WEAKNET_AUTONOMY:
-        return "edge_autonomy", edge_result["action"]
-    else:
-        return "edge", edge_result["action"]
+def make_final_decision(routing_mode, edge_result, cloud_review, device_id, network_status):
+    events = []
+    
+    edge_action_map = {
+        "紧急停机并上报云端": "shutdown",
+        "建议维护并持续监控": "maintain",
+        "正常运行": "monitor"
+    }
+    
+    edge_event = build_event(
+        node_id="edge_node",
+        device_id=device_id,
+        fault_label=edge_result["fault_label_name"],
+        risk_level=edge_result["risk_level"],
+        action=edge_action_map.get(edge_result["action"], edge_result["action"]),
+        confidence=edge_result["confidence"],
+        source="edge"
+    )
+    events.append(edge_event)
+    
+    if cloud_review and cloud_review["reviewed"]:
+        cloud_action_map = {
+            "紧急停机并上报云端": "shutdown",
+            "建议维护并持续监控": "maintain",
+            "正常运行": "monitor"
+        }
+        cloud_event = build_event(
+            node_id="cloud_gcm",
+            device_id=device_id,
+            fault_label=cloud_review["gcm_fault_label"],
+            risk_level=cloud_review["gcm_risk_level"],
+            action=cloud_action_map.get(cloud_review["gcm_action"], cloud_review["gcm_action"]),
+            confidence=cloud_review["gcm_confidence"],
+            source="cloud"
+        )
+        events.append(cloud_event)
+    
+    detector = ConflictDetector()
+    detect_result = detector.detect(events)
+    
+    conflict_info = ""
+    if detect_result["conflict_count"] > 0:
+        conflict_info = f" | 冲突类型: {list(detect_result['conflict_type_counts'].keys())}"
+        print(f"⚠️  检测到冲突{conflict_info}")
+    
+    resolver = ConflictResolver(strategy="highest_risk_first", network_status=network_status)
+    resolve_result = resolver.resolve(events)
+    
+    final_decision_obj = resolve_result["final_decision_obj"]
+    
+    decision_source_map = {
+        "arbitrated": "arbitrated",
+        "cloud": "cloud",
+        "edge": "edge"
+    }
+    
+    return (
+        decision_source_map.get(final_decision_obj.decision_source, final_decision_obj.decision_source),
+        final_decision_obj.final_action,
+        final_decision_obj.arbitration_reason,
+        detect_result["conflict_count"]
+    )
 
 def test_edge_cloud_flow():
     print("="*60)
@@ -219,13 +266,17 @@ def test_edge_cloud_flow():
             else:
                 print(f"  失败原因: {cloud_review.get('gcm_reason', '未知')}")
         
-        final_decision, final_action = make_final_decision(
-            routing_decision.mode, edge_result, cloud_review
+        network_status_str = scenario["network"].value
+        
+        final_decision, final_action, arbitration_reason, conflict_count = make_final_decision(
+            routing_decision.mode, edge_result, cloud_review, device_id, network_status_str
         )
         
         print(f"\n✅ 最终决策:")
         print(f"  决策来源: {final_decision}")
         print(f"  执行动作: {final_action}")
+        print(f"  仲裁理由: {arbitration_reason}")
+        print(f"  检测冲突数: {conflict_count}")
         
         mode_correct = routing_decision.mode == scenario["expected_mode"]
         results.append({
