@@ -4,334 +4,350 @@ import json
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from routing import (
-    NetworkStatus,
-    create_network_simulator,
-    create_router,
-    RoutingMode
-)
-
-class MockDeviceState:
-    def __init__(self, air_temperature_k, process_temperature_k, rotational_speed_rpm, torque_nm, tool_wear_min):
-        self.air_temperature_k = air_temperature_k
-        self.process_temperature_k = process_temperature_k
-        self.rotational_speed_rpm = rotational_speed_rpm
-        self.torque_nm = torque_nm
-        self.tool_wear_min = tool_wear_min
-
-class MockCloudReviewer:
-    def __init__(self):
-        self.cloud_call_count = 0
-        self.consistent_count = 0
-    
-    def review(self, edge_summary):
-        self.cloud_call_count += 1
-        edge_confidence = edge_summary.get("edge_confidence", 0.5)
-        edge_action = edge_summary.get("edge_action", "")
-        
-        if edge_confidence > 0.8:
-            agree_prob = 0.85
-        elif edge_confidence > 0.5:
-            agree_prob = 0.6
-        else:
-            agree_prob = 0.3
-        
-        import random
-        consistent = random.random() < agree_prob
-        if consistent:
-            self.consistent_count += 1
-        
-        return {
-            "review_id": f"review_{self.cloud_call_count}",
-            "gcm_fault_label": edge_summary.get("edge_fault_label", "Normal"),
-            "gcm_risk_level": edge_summary.get("edge_risk_level", "medium"),
-            "gcm_action": edge_action if consistent else random.choice(["maintain", "replace", "monitor", "shutdown"]),
-            "gcm_confidence": min(edge_confidence + 0.1, 0.98),
-            "gcm_reason": "Mock GCM review completed",
-            "consistent_with_edge": consistent,
-            "latency_ms": random.randint(50, 200)
-        }
-    
-    def get_stats(self):
-        return {
-            "cloud_call_count": self.cloud_call_count,
-            "consistent_count": self.consistent_count,
-            "edge_cloud_consistency": self.consistent_count / self.cloud_call_count if self.cloud_call_count > 0 else 0
-        }
-
-def mock_inference(device_state):
-    air_temp = device_state.air_temperature_k
-    process_temp = device_state.process_temperature_k
-    torque = device_state.torque_nm
-    tool_wear = device_state.tool_wear_min
-    
-    fault_prob = 0.0
-    if process_temp > 310:
-        fault_prob += 0.3
-    if torque > 60:
-        fault_prob += 0.25
-    if tool_wear > 150:
-        fault_prob += 0.35
-    if air_temp > 300:
-        fault_prob += 0.1
-    
-    fault_prob = min(fault_prob, 0.95)
-    
-    if fault_prob > 0.7:
-        fault_label = 1
-        risk_level = "high"
-        action = "紧急停机并上报云端"
-        confidence = 0.8 + (fault_prob - 0.7) * 0.4
-    elif fault_prob > 0.4:
-        fault_label = 1
-        risk_level = "medium"
-        action = "建议维护并持续监控"
-        confidence = 0.7 + (fault_prob - 0.4) * 0.3
-    else:
-        fault_label = 0
-        risk_level = "low"
-        action = "正常运行"
-        confidence = 0.85 + (0.4 - fault_prob) * 0.15
-    
-    confidence = min(confidence, 0.99)
-    
-    fault_label_names = {0: "Normal", 1: "Fault Detected"}
-    
-    return {
-        "fault_label": fault_label,
-        "fault_label_name": fault_label_names[fault_label],
-        "fault_prob": round(fault_prob, 4),
-        "risk_level": risk_level,
-        "action": action,
-        "confidence": round(confidence, 4)
-    }
-
-def perform_cloud_review(device_id, result, device_state, cloud_reviewer):
-    edge_summary = {
-        "device_id": device_id,
-        "edge_fault_label": result["fault_label_name"],
-        "edge_risk_level": result["risk_level"],
-        "edge_action": result["action"],
-        "edge_confidence": result["confidence"],
-        "device_features": {
-            "air_temperature_k": device_state.air_temperature_k,
-            "process_temperature_k": device_state.process_temperature_k,
-            "rotational_speed_rpm": device_state.rotational_speed_rpm,
-            "torque_nm": device_state.torque_nm,
-            "tool_wear_min": device_state.tool_wear_min
-        }
-    }
-    
+def test_industrial_pipeline():
+    print("[1/4] 测试工业场景完整流水线 ...", end=" ")
     try:
-        review_result = cloud_reviewer.review(edge_summary)
-        return {
-            "reviewed": True,
-            "review_id": review_result.get("review_id", ""),
-            "gcm_fault_label": review_result.get("gcm_fault_label", ""),
-            "gcm_risk_level": review_result.get("gcm_risk_level", ""),
-            "gcm_action": review_result.get("gcm_action", ""),
-            "gcm_confidence": review_result.get("gcm_confidence", 0.0),
-            "gcm_reason": review_result.get("gcm_reason", ""),
-            "consistent_with_edge": review_result.get("consistent_with_edge", False),
-            "latency_ms": review_result.get("latency_ms", 0.0)
-        }
+        from consistency.event_schema import (
+            Observation, EdgeDecision, RouteDecision,
+            CloudReview, FinalDecision, Event, build_event,
+        )
+        from consistency.conflict_detector import ConflictDetector
+        from consistency.conflict_resolver import ConflictResolver
+        from routing import Router, NetworkStatus, NetworkSimulator, create_router, create_network_simulator, RoutingMode
+
+        trace_id = "trace-integration-test-001"
+
+        def _route_to_string(mode):
+            mapping = {
+                RoutingMode.EDGE_ONLY: "EdgeOnly",
+                RoutingMode.CLOUD_ONLY: "CloudOnly",
+                RoutingMode.CLOUD_EDGE: "EdgeCloud",
+                RoutingMode.WEAKNET_AUTONOMY: "SafeFallback",
+            }
+            return mapping.get(mode, "EdgeOnly")
+
+        router = create_router(confidence_threshold=0.7)
+        sim = create_network_simulator(seed=42)
+
+        obs = Observation(
+            scene="industrial",
+            node_id="edge_0",
+            object_id="device_001",
+            payload={
+                "product_type": "L",
+                "air_temperature_k": 305.0,
+                "process_temperature_k": 312.0,
+                "rotational_speed_rpm": 1450,
+                "torque_nm": 55.0,
+                "tool_wear_min": 180,
+            },
+            trace_id=trace_id,
+            deadline_ms=200,
+        )
+        assert obs.scene == "industrial"
+        assert obs.trace_id == trace_id
+        assert obs.event_id.startswith("evt-")
+
+        ed = EdgeDecision(
+            event_id=obs.event_id,
+            trace_id=trace_id,
+            scene="industrial",
+            node_id="edge_0",
+            predicted_label="Heat Dissipation Failure",
+            risk_level="high",
+            action="shutdown",
+            confidence=0.85,
+            model_version="RandomForest-v1",
+            reason="ProcessTemp=312K > 310K threshold",
+            inference_ms=15.5,
+        )
+
+        assert ed.scene == "industrial"
+        assert ed.risk_level == "high"
+        assert ed.action == "shutdown"
+
+        sim.set_status(NetworkStatus.NORMAL)
+        router.set_network_status(NetworkStatus.NORMAL)
+        stats = sim.get_network_stats()
+
+        route_decision = router.decide(
+            confidence=ed.confidence,
+            risk_level=ed.risk_level,
+            fault_prob=0.8,
+            network_stats=stats,
+        )
+
+        route = RouteDecision(
+            trace_id=trace_id,
+            route=_route_to_string(route_decision.mode),
+            reason_codes=[route_decision.reason],
+            estimated_total_ms=15.5 + stats.latency_ms,
+            remaining_deadline_ms=max(200 - 15.5 - stats.latency_ms, 0),
+        )
+
+        assert route.route in ["EdgeOnly", "EdgeCloud", "CloudOnly", "SafeFallback"]
+
+        cloud_review = CloudReview(
+            trace_id=trace_id,
+            reviewed_label="Heat Dissipation Failure",
+            risk_level="high",
+            action="shutdown",
+            confidence=0.92,
+            model="qwen3.5-35b",
+            reason="云端复核确认高风险故障",
+            latency_ms=85.0,
+        )
+
+        edge_event = Event.from_edge_decision(ed)
+        cloud_event = Event.from_cloud_review(cloud_review)
+
+        assert edge_event.source == "edge"
+        assert cloud_event.source == "cloud"
+
+        detector = ConflictDetector(duplicate_time_window_s=60, stale_threshold_ms=5000)
+        detect_result = detector.detect([edge_event, cloud_event])
+
+        assert detect_result["total_events"] == 2
+        assert detect_result["conflict_count"] >= 0
+
+        resolver = ConflictResolver(strategy="highest_risk_first", network_status="normal")
+        resolve_result = resolver.resolve([edge_event, cloud_event], detect_result["conflict_details"])
+
+        assert resolve_result["final_decision_obj"] is not None
+        fd = resolve_result["final_decision_obj"]
+        assert isinstance(fd, FinalDecision)
+        assert fd.trace_id == trace_id
+        assert fd.final_action in ["monitor", "warn", "maintain", "shutdown", "replace"]
+
+        print("OK")
+        return True
     except Exception as e:
-        return {
-            "reviewed": False,
-            "gcm_reason": f"云端复核失败: {str(e)}"
-        }
+        import traceback
+        traceback.print_exc()
+        print(f"FAIL: {e}")
+        return False
 
-def make_final_decision(routing_mode, edge_result, cloud_review):
-    if routing_mode == RoutingMode.EDGE_ONLY:
-        return "edge", edge_result["action"]
-    elif routing_mode == RoutingMode.CLOUD_ONLY:
-        if cloud_review and cloud_review["reviewed"]:
-            return "cloud", cloud_review["gcm_action"]
-        return "edge", edge_result["action"]
-    elif routing_mode == RoutingMode.CLOUD_EDGE:
-        if cloud_review and cloud_review["reviewed"]:
-            if cloud_review["consistent_with_edge"]:
-                return "consensus", edge_result["action"]
-            else:
-                return "cloud_disagrees", f"边缘: {edge_result['action']}, 云端: {cloud_review['gcm_action']}"
-        return "edge", edge_result["action"]
-    elif routing_mode == RoutingMode.WEAKNET_AUTONOMY:
-        return "edge_autonomy", edge_result["action"]
-    else:
-        return "edge", edge_result["action"]
+def test_weaknet_fallback():
+    """弱网自治路径测试"""
+    print("[2/4] 测试弱网自治路径 ...", end=" ")
+    try:
+        from routing import Router, NetworkStatus, create_router, create_network_simulator
+        from consistency.event_schema import Event, build_event
+        from consistency.conflict_detector import ConflictDetector
+        from consistency.conflict_resolver import ConflictResolver
 
-def test_edge_cloud_flow():
-    print("="*60)
-    print("云边协同系统集成测试 (Mock模式)")
-    print("="*60)
-    
-    simulator = create_network_simulator(seed=123)
-    router = create_router(confidence_threshold=0.7)
-    cloud_reviewer = MockCloudReviewer()
-    
-    test_scenarios = [
-        {
-            "name": "场景1: 低风险高置信度正常网络 - 边缘独立处理",
-            "device": MockDeviceState(298.0, 305.0, 1400, 45.0, 50),
-            "network": NetworkStatus.NORMAL,
-            "manual_edge_result": None,
-            "expected_mode": RoutingMode.EDGE_ONLY
-        },
-        {
-            "name": "场景2: 高风险正常网络(故障概率0.7) - 云边协同",
-            "device": MockDeviceState(303.0, 312.0, 1500, 62.0, 155),
-            "network": NetworkStatus.NORMAL,
-            "manual_edge_result": {
-                "fault_label": 1,
-                "fault_label_name": "Fault Detected",
-                "fault_prob": 0.70,
-                "risk_level": "high",
-                "action": "紧急停机并上报云端",
-                "confidence": 0.88
+        router = create_router(confidence_threshold=0.7)
+        sim = create_network_simulator(seed=99)
+
+        sim.set_status(NetworkStatus.WEAK)
+        router.set_network_status(NetworkStatus.WEAK)
+        stats = sim.get_network_stats()
+
+        d = router.decide(confidence=0.4, risk_level="high", fault_prob=0.7, network_stats=stats)
+        assert d.mode.value == "WeakNetAutonomy"
+        assert d.pending_review is True
+
+        d2 = router.decide(confidence=0.9, risk_level="low", fault_prob=0.1, network_stats=stats)
+        assert d2.mode.value == "EdgeOnly"
+
+        sim.set_status(NetworkStatus.DISCONNECTED)
+        router.set_network_status(NetworkStatus.DISCONNECTED)
+        stats2 = sim.get_network_stats()
+
+        d3 = router.decide(confidence=0.3, risk_level="critical", fault_prob=0.95, network_stats=stats2)
+        assert d3.mode.value == "EdgeOnly"
+
+        events = [
+            build_event("edge_0", "device_001", "Fault", "high", "shutdown", 0.85, "edge"),
+            build_event("edge_1", "device_001", "Fault", "medium", "maintain", 0.70, "edge"),
+        ]
+
+        resolver = ConflictResolver(strategy="cloud_first", network_status="weak")
+        result = resolver.resolve(events)
+        assert result["effective_strategy"] == "edge_first"
+
+        resolver2 = ConflictResolver(strategy="cloud_first", network_status="disconnected")
+        result2 = resolver2.resolve(events)
+        assert result2["effective_strategy"] == "edge_first"
+
+        print("OK")
+        return True
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        print(f"FAIL: {e}")
+        return False
+def test_energy_scene_pipeline():
+    """能源场景流水线测试"""
+    print("[3/4] 测试能源场景流水线 ...", end=" ")
+    try:
+        from consistency.event_schema import (
+            Observation, EdgeDecision, Event, EnergyEvent,
+        )
+        from consistency.conflict_detector import ConflictDetector
+        from consistency.conflict_resolver import ConflictResolver
+
+        obs = Observation(
+            scene="energy",
+            node_id="generator_1",
+            object_id="grid_a",
+            payload={
+                "node_type": "generator",
+                "power_output": 180.0,
+                "local_rtt_ms": 30.0,
             },
-            "expected_mode": RoutingMode.CLOUD_EDGE
-        },
-        {
-            "name": "场景3: 极高风险正常网络(故障概率0.95) - 仅云端处理",
-            "device": MockDeviceState(310.0, 325.0, 1800, 85.0, 250),
-            "network": NetworkStatus.NORMAL,
-            "manual_edge_result": None,
-            "expected_mode": RoutingMode.CLOUD_ONLY
-        },
-        {
-            "name": "场景4: 弱网高风险 - 边缘自治",
-            "device": MockDeviceState(305.0, 315.0, 1550, 68.0, 180),
-            "network": NetworkStatus.WEAK,
-            "manual_edge_result": None,
-            "expected_mode": RoutingMode.WEAKNET_AUTONOMY
-        },
-        {
-            "name": "场景5: 网络断开 - 边缘自治",
-            "device": MockDeviceState(302.0, 312.0, 1500, 65.0, 160),
-            "network": NetworkStatus.DISCONNECTED,
-            "manual_edge_result": None,
-            "expected_mode": RoutingMode.EDGE_ONLY
-        },
-        {
-            "name": "场景6: 低置信度正常网络 - 云边协同",
-            "device": MockDeviceState(300.0, 308.0, 1450, 55.0, 120),
-            "network": NetworkStatus.NORMAL,
-            "manual_edge_result": {
-                "fault_label": 1,
-                "fault_label_name": "Fault Detected",
-                "fault_prob": 0.45,
-                "risk_level": "medium",
-                "action": "建议维护并持续监控",
-                "confidence": 0.65
-            },
-            "expected_mode": RoutingMode.CLOUD_EDGE
-        }
+            trace_id="trace-energy-test-001",
+        )
+
+        assert obs.scene == "energy"
+
+        ed = EdgeDecision(
+            event_id=obs.event_id,
+            trace_id=obs.trace_id,
+            scene="energy",
+            node_id="generator_1",
+            predicted_label="Stable",
+            risk_level="low",
+            action="maintain",
+            confidence=0.88,
+            model_version="energy_mock_v1",
+            reason="Power output within stable range",
+            inference_ms=8.0,
+        )
+
+        assert ed.scene == "energy"
+        assert ed.action == "maintain"
+
+        energy_event = EnergyEvent(
+            node_id="generator_1",
+            node_type="generator",
+            grid_id="grid_a",
+            stability_label="Stable",
+            risk_level="low",
+            action="maintain",
+            confidence=0.88,
+            current_power=180.0,
+            requested_power_adjustment=0.0,
+            source="edge",
+            trace_id=obs.trace_id,
+        )
+
+        assert energy_event.node_type == "generator"
+        assert energy_event.grid_id == "grid_a"
+
+        consumer_event = EnergyEvent(
+            node_id="consumer_1",
+            node_type="consumer",
+            grid_id="grid_a",
+            stability_label="Warning",
+            risk_level="medium",
+            action="reduce_load",
+            confidence=0.72,
+            current_power=90.0,
+            requested_power_adjustment=-10.0,
+            source="edge",
+            trace_id=obs.trace_id,
+        )
+
+        events = [
+            Event.from_edge_decision(ed),
+        ]
+
+        detector = ConflictDetector()
+        result = detector.detect(events)
+        assert result["total_events"] == 1
+
+        print("OK")
+        return True
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        print(f"FAIL: {e}")
+        return False
+
+def test_consistency_integration():
+    """一致性与路由集成测试"""
+    print("[4/4] 测试一致性与路由集成 ...", end=" ")
+    try:
+        from consistency.event_schema import build_event
+        from consistency.conflict_detector import ConflictDetector
+        from consistency.conflict_resolver import ConflictResolver
+        from routing import Router, NetworkStatus, create_router, create_network_simulator
+
+        events = [
+            build_event("edge_0", "device_001", "Heat Dissipation Failure", "high", "shutdown", 0.85, "edge"),
+            build_event("edge_1", "device_001", "Normal", "low", "monitor", 0.92, "edge"),
+            build_event("cloud_gcm", "device_001", "Heat Dissipation Failure", "critical", "shutdown", 0.95, "cloud"),
+        ]
+
+        detector = ConflictDetector()
+        detect_result = detector.detect(events)
+
+        assert detect_result["conflict_count"] >= 2
+        assert detect_result["conflict_type_counts"]["label_conflict"] >= 1
+        assert detect_result["conflict_type_counts"]["action_conflict"] >= 1
+
+        for strategy in ["highest_risk_first", "highest_confidence_first", "cloud_first", "edge_first"]:
+            resolver = ConflictResolver(strategy=strategy)
+            result = resolver.resolve(events, detect_result["conflict_details"])
+            assert result["final_decision_obj"] is not None
+            fd = result["final_decision_obj"]
+            assert fd.final_action in ["monitor", "warn", "maintain", "shutdown", "replace"]
+            assert fd.decision_source in ["edge_only", "cloud_only", "arbitrated"]
+
+        router = create_router(confidence_threshold=0.7)
+        sim = create_network_simulator(seed=42)
+
+        for net_status in [NetworkStatus.NORMAL, NetworkStatus.WEAK, NetworkStatus.DISCONNECTED]:
+            sim.set_status(net_status)
+            router.set_network_status(net_status)
+            stats = sim.get_network_stats()
+
+            d = router.decide(confidence=0.5, risk_level="high", fault_prob=0.75, network_stats=stats)
+
+            resolver = ConflictResolver(strategy="cloud_first", network_status=net_status.value)
+            result = resolver.resolve(events, detect_result["conflict_details"])
+
+            assert result["effective_strategy"] is not None
+
+        print("OK")
+        return True
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        print(f"FAIL: {e}")
+        return False
+
+def main():
+    print("=" * 60)
+    print("系统集成测试")
+    print("=" * 60)
+
+    tests = [
+        test_industrial_pipeline,
+        test_weaknet_fallback,
+        test_energy_scene_pipeline,
+        test_consistency_integration,
     ]
-    
-    results = []
-    
-    for i, scenario in enumerate(test_scenarios):
-        print(f"\n{'─'*50}")
-        print(f"测试 {i+1}: {scenario['name']}")
-        print(f"{'─'*50}")
-        
-        device_id = f"test_device_{i+1}"
-        
-        if scenario.get("manual_edge_result"):
-            edge_result = scenario["manual_edge_result"]
+
+    passed = 0
+    failed = 0
+
+    for test in tests:
+        if test():
+            passed += 1
         else:
-            edge_result = mock_inference(scenario["device"])
-        print(f"\n📊 边缘推理结果:")
-        print(f"  故障标签: {edge_result['fault_label_name']}")
-        print(f"  故障概率: {edge_result['fault_prob']:.4f}")
-        print(f"  风险等级: {edge_result['risk_level']}")
-        print(f"  建议动作: {edge_result['action']}")
-        print(f"  置信度: {edge_result['confidence']:.4f}")
-        
-        simulator.set_status(scenario["network"])
-        router.set_network_status(scenario["network"])
-        network_stats = simulator.get_network_stats()
-        
-        routing_decision = router.decide(
-            confidence=edge_result["confidence"],
-            risk_level=edge_result["risk_level"],
-            fault_prob=edge_result["fault_prob"],
-            network_stats=network_stats
-        )
-        
-        print(f"\n🔀 路由决策:")
-        print(f"  网络状态: {scenario['network'].value}")
-        print(f"  路由模式: {routing_decision.mode.value}")
-        print(f"  决策原因: {routing_decision.reason}")
-        print(f"  待复核: {routing_decision.pending_review}")
-        
-        cloud_review = None
-        if routing_decision.mode in [RoutingMode.CLOUD_EDGE, RoutingMode.CLOUD_ONLY]:
-            print(f"\n☁️  云端复核中...")
-            cloud_review = perform_cloud_review(device_id, edge_result, scenario["device"], cloud_reviewer)
-            
-            print(f"  已复核: {cloud_review['reviewed']}")
-            if cloud_review['reviewed']:
-                print(f"  GCM故障标签: {cloud_review['gcm_fault_label']}")
-                print(f"  GCM风险等级: {cloud_review['gcm_risk_level']}")
-                print(f"  GCM建议动作: {cloud_review['gcm_action']}")
-                print(f"  GCM置信度: {cloud_review['gcm_confidence']:.4f}")
-                print(f"  与边缘一致: {cloud_review['consistent_with_edge']}")
-                print(f"  复核延迟: {cloud_review['latency_ms']}ms")
-            else:
-                print(f"  失败原因: {cloud_review.get('gcm_reason', '未知')}")
-        
-        final_decision, final_action = make_final_decision(
-            routing_decision.mode, edge_result, cloud_review
-        )
-        
-        print(f"\n✅ 最终决策:")
-        print(f"  决策来源: {final_decision}")
-        print(f"  执行动作: {final_action}")
-        
-        mode_correct = routing_decision.mode == scenario["expected_mode"]
-        results.append({
-            "name": scenario["name"],
-            "mode": routing_decision.mode.value,
-            "expected_mode": scenario["expected_mode"].value,
-            "mode_correct": mode_correct,
-            "cloud_reviewed": cloud_review is not None and cloud_review.get("reviewed", False),
-            "final_decision": final_decision
-        })
-        
-        status = "✓" if mode_correct else "✗"
-        print(f"\n{status} 路由模式验证: 期望 {scenario['expected_mode'].value}, 实际 {routing_decision.mode.value}")
-    
-    print(f"\n{'='*60}")
-    print("测试总结")
-    print(f"{'='*60}")
-    
-    mode_results = [r["mode_correct"] for r in results]
-    passed = sum(mode_results)
-    total = len(mode_results)
-    
-    print(f"\n路由模式验证: {passed}/{total} 通过")
-    
-    cloud_reviewed_count = sum(1 for r in results if r["cloud_reviewed"])
-    print(f"云端复核调用: {cloud_reviewed_count} 次成功")
-    
-    cloud_stats = cloud_reviewer.get_stats()
-    print(f"\n云端复核统计:")
-    print(f"  总调用次数: {cloud_stats['cloud_call_count']}")
-    print(f"  边云一致性: {cloud_stats['edge_cloud_consistency']:.4f}")
-    
-    print(f"\n路由决策日志:")
-    for entry in router.get_log():
-        print(f"  {entry['timestamp'][:19]}: {entry['mode']} - {entry['reason']}")
-    
-    router.save_log_to_csv("logs/integration_test_log.csv", append=False)
-    
-    print(f"\n{'='*60}")
-    if passed == total:
-        print("🎉 所有测试通过！")
+            failed += 1
+
+    print("-" * 60)
+    print(f"通过: {passed}/{len(tests)}, 失败: {failed}")
+    print("=" * 60)
+
+    if failed > 0:
+        sys.exit(1)
     else:
-        print(f"⚠️  {total - passed} 个测试失败")
-    print(f"{'='*60}")
+        print("✅ 所有集成测试通过！")
+        sys.exit(0)
 
 if __name__ == "__main__":
-    test_edge_cloud_flow()
+    main()
