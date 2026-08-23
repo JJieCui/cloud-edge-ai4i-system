@@ -41,3 +41,50 @@
 - .vscode/launch.json：FastAPI、Streamlit 和当前文件调试配置。
 
 当前系统若未安装 Python 3.11，需要先安装 Python，再创建 .venv。
+
+## AI4I 边缘感知模块
+
+### 模块功能
+
+AI4I 边缘感知模块负责工业设备预测性维护场景中的边缘侧故障检测流程，包括 AI4I 原始数据检查、非 IID client 划分、本地 baseline 训练、结果图表生成、单条设备状态推理，以及边缘服务 `/predict` 接口接入。
+
+模块主要文件包括：
+
+- `data/read_ai4i.py`：读取和检查 AI4I 原始数据。
+- `data/split_clients.py`：划分 5 个非 IID client，并生成统一测试集 `global_test.csv`。
+- `edge/perception/models.py`：定义 LogisticRegression、RandomForest、MLP baseline Pipeline。
+- `edge/perception/train_local_model.py`：训练 5 个 client 的本地 baseline，输出 `perception_baseline.csv`，并保存 RandomForest Pipeline。
+- `edge/perception/plot_baseline_results.py`：生成 Accuracy、Precision、Recall、F1 指标图表。
+- `edge/perception/infer_edge.py`：加载边缘模型，对单条设备状态进行推理。
+- `edge/edge_node_service.py`：通过 `/predict` 接口优先调用边缘感知模型，失败时 fallback 到 mock 推理。
+
+### 运行顺序
+
+在项目根目录依次运行：
+
+```bash
+python data/read_ai4i.py
+python data/split_clients.py
+python edge/perception/train_local_model.py
+python edge/perception/plot_baseline_results.py
+python edge/perception/infer_edge.py
+uvicorn edge.edge_node_service:app --reload
+```
+
+### 输出结果
+
+- `results/tables/client_distribution.csv`：5 个非 IID client 的样本数、故障率和关键特征统计。
+- `data/ai4i/clients/client_1.csv` 至 `data/ai4i/clients/client_5.csv`：边缘节点本地训练数据。
+- `data/ai4i/test/global_test.csv`：统一公共测试集。
+- `results/tables/perception_baseline.csv`：LogisticRegression、RandomForest、MLP 在 5 个 client 上的 Accuracy、Precision、Recall、F1。
+- `results/models/perception/client_i_randomforest.joblib`：可被 `infer_edge.py` 加载的 RandomForest Pipeline。
+- `results/figures/perception_accuracy_by_model.png`
+- `results/figures/perception_precision_by_model.png`
+- `results/figures/perception_recall_by_model.png`
+- `results/figures/perception_f1_by_model.png`
+
+### 推理与服务
+
+`edge/perception/infer_edge.py` 默认加载 `results/models/perception/client_1_randomforest.joblib`，输入单条设备状态后输出故障标签、故障概率、风险等级、建议动作和置信度。
+
+启动 `uvicorn edge.edge_node_service:app --reload` 后，可以通过 FastAPI 的 `/predict` 接口调用边缘感知结果。在依赖已正确安装且服务成功启动的前提下，若 `/predict` 推理阶段出现模型文件缺失或模型推理异常，接口会 fallback 到 `mock_inference`，避免单次模型异常中断边缘推理流程。
